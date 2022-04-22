@@ -1406,6 +1406,9 @@ var Keyboard = GObject.registerClass({
         // keyboard on RTL locales.
         this.text_direction = Clutter.TextDirection.LTR;
 
+        Main.inputMethod.connect(
+            'terminal-mode-changed', this._onTerminalModeChanged.bind(this));
+
         this._keyboardController.connectObject(
             'active-group', this._onGroupChanged.bind(this),
             'groups-changed', this._onKeyboardGroupsChanged.bind(this),
@@ -1600,7 +1603,9 @@ var Keyboard = GObject.registerClass({
         this._deleteEnabled = enabled;
         this._timesDeleted = 0;
 
-        if (!Main.inputMethod.currentFocus || Main.inputMethod.hasPreedit()) {
+        if (!Main.inputMethod.currentFocus ||
+            Main.inputMethod.hasPreedit() ||
+            Main.inputMethod.terminalMode) {
             /* If there is no IM focus or are in the middle of preedit,
              * fallback to keypresses */
             if (enabled)
@@ -1781,9 +1786,17 @@ var Keyboard = GObject.registerClass({
         }
     }
 
-    _onGroupChanged() {
+    _updateKeys() {
         this._ensureKeysForGroup(this._keyboardController.getCurrentGroup());
         this._setActiveLayer(0);
+    }
+
+    _onGroupChanged() {
+        this._updateKeys();
+    }
+
+    _onTerminalModeChanged() {
+        this._updateKeys();
     }
 
     _onKeyboardGroupsChanged() {
@@ -2196,6 +2209,8 @@ var KeyboardController = class extends Signals.EventEmitter {
     }
 
     getCurrentGroup() {
+        if (Main.inputMethod.terminalMode)
+            return 'us-extended';
         return this._currentSource.xkbId;
     }
 
