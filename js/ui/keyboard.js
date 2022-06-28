@@ -60,7 +60,6 @@ class AspectContainer extends St.Widget {
     vfunc_allocate(box) {
         if (box.get_width() > 0 && box.get_height() > 0) {
             let sizeRatio = box.get_width() / box.get_height();
-
             if (sizeRatio >= this._ratio) {
                 /* Restrict horizontally */
                 let width = box.get_height() * this._ratio;
@@ -653,7 +652,7 @@ var EmojiPager = GObject.registerClass({
         },
     },
 }, class EmojiPager extends St.Widget {
-    _init(sections, nCols, nRows) {
+    _init(sections) {
         super._init({
             layout_manager: new Clutter.BinLayout(),
             reactive: true,
@@ -661,8 +660,6 @@ var EmojiPager = GObject.registerClass({
             y_expand: true,
         });
         this._sections = sections;
-        this._nCols = nCols;
-        this._nRows = nRows;
 
         this._pages = [];
         this._panel = null;
@@ -672,8 +669,6 @@ var EmojiPager = GObject.registerClass({
         this._currentKey = null;
         this._delta = 0;
         this._width = null;
-
-        this._initPagingInfo();
 
         let panAction = new Clutter.PanAction({ interpolate: false });
         panAction.connect('pan', this._onPan.bind(this));
@@ -802,6 +797,8 @@ var EmojiPager = GObject.registerClass({
     }
 
     _initPagingInfo() {
+        this._pages = [];
+
         for (let i = 0; i < this._sections.length; i++) {
             let section = this._sections[i];
             let itemsPerPage = this._nCols * this._nRows;
@@ -929,6 +926,12 @@ var EmojiPager = GObject.registerClass({
             }
         }
     }
+
+    setRatio(nCols, nRows) {
+        this._nCols = nCols;
+        this._nRows = nRows;
+        this._initPagingInfo();
+    }
 });
 
 var EmojiSelection = GObject.registerClass({
@@ -937,13 +940,18 @@ var EmojiSelection = GObject.registerClass({
         'close-request': {},
         'toggle': {},
     },
-}, class EmojiSelection extends St.BoxLayout {
+}, class EmojiSelection extends St.Widget {
     _init() {
+        const gridLayout = new Clutter.GridLayout({
+            orientation: Clutter.Orientation.HORIZONTAL,
+            column_homogeneous: true,
+            row_homogeneous: true,
+        });
         super._init({
+            layout_manager: gridLayout,
             style_class: 'emoji-panel',
             x_expand: true,
             y_expand: true,
-            vertical: true,
         });
 
         this._sections = [
@@ -958,28 +966,36 @@ var EmojiSelection = GObject.registerClass({
             { first: 'chequered flag', label: '🚩️' },
         ];
 
+        this._gridLayout = gridLayout;
         this._populateSections();
 
-        this._emojiPager = new EmojiPager(this._sections, 11, 3);
+        this._pagerBox = new Clutter.Actor({
+            layout_manager: new Clutter.BoxLayout({
+                orientation: Clutter.Orientation.VERTICAL,
+            }),
+        });
+
+        this._emojiPager = new EmojiPager(this._sections);
         this._emojiPager.connect('page-changed', (pager, sectionLabel, page, nPages) => {
             this._onPageChanged(sectionLabel, page, nPages);
         });
         this._emojiPager.connect('emoji', (pager, str) => {
             this.emit('emoji-selected', str);
         });
-        this.add_child(this._emojiPager);
+        this._pagerBox.add_child(this._emojiPager);
 
         this._pageIndicator = new PageIndicators.PageIndicators(
             Clutter.Orientation.HORIZONTAL);
-        this.add_child(this._pageIndicator);
+        this._pageIndicator.y_expand = false;
+        this._pageIndicator.y_align = Clutter.ActorAlign.START;
+        this._pagerBox.add_child(this._pageIndicator);
         this._pageIndicator.setReactive(false);
 
         this._emojiPager.connect('notify::delta', () => {
             this._updateIndicatorPosition();
         });
 
-        let bottomRow = this._createBottomRow();
-        this.add_child(bottomRow);
+        this._bottomRow = this._createBottomRow();
 
         this._curPage = 0;
     }
@@ -1082,13 +1098,23 @@ var EmojiSelection = GObject.registerClass({
             y_expand: true,
         });
         actor.add_child(row);
-        /* Regular keyboard layouts are 11.5×4 grids, optimize for that
-         * at the moment. Ideally this should be as wide as the current
-         * keymap.
-         */
-        actor.setRatio(11.5, 1);
 
         return actor;
+    }
+
+    setRatio(nCols, nRows) {
+        this._emojiPager.setRatio(Math.floor(nCols), Math.floor(nRows) - 1);
+        this._bottomRow.setRatio(nCols, 1);
+
+        // (Re)attach actors so the emoji panel fits the ratio and
+        // the bottom row is ensured to take 1 row high.
+        if (this._pagerBox.get_parent())
+            this.remove_child(this._pagerBox);
+        if (this._bottomRow.get_parent())
+            this.remove_child(this._bottomRow);
+
+        this._gridLayout.attach(this._pagerBox, 0, 0, 1, Math.floor(nRows) - 1);
+        this._gridLayout.attach(this._bottomRow, 0, Math.floor(nRows) - 1, 1, 1);
     }
 });
 
@@ -1383,8 +1409,8 @@ var Keyboard = GObject.registerClass({
             this._keyboardController.commitString(emoji);
         });
 
-        this._aspectContainer.add_child(this._emojiSelection);
         this._emojiSelection.hide();
+        this._aspectContainer.add_child(this._emojiSelection);
 
         this._keypad = new Keypad();
         this._keypad.connectObject('keyval', (_keypad, keyval) => {
@@ -1855,6 +1881,7 @@ var Keyboard = GObject.registerClass({
         });
         this._updateCurrentPageVisible();
         this._aspectContainer.setRatio(...this._currentPage.getRatio());
+        this._emojiSelection.setRatio(...this._currentPage.getRatio());
     }
 
     _clearKeyboardRestTimer() {
